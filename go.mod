@@ -1,4 +1,4 @@
-module github.com/kklab-com/goth-kklogger
+module github.com/yetiz-org/goth-kklogger
 
 go 1.22
 
