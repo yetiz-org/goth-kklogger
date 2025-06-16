@@ -61,9 +61,9 @@ func init() {
 
 func _Init() {
 	once.Do(func() {
-		e := os.MkdirAll(LoggerPath, 0755)
+		e := os.MkdirAll(LoggerFilePath(), 0755)
 		if e == nil {
-			logFile, e := os.OpenFile(path.Join(LoggerPath, "current.log"),
+			logFile, e := os.OpenFile(path.Join(LoggerFilePath(), "current.log"),
 				os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
 			if e != nil {
 				println(e.Error())
@@ -71,7 +71,7 @@ func _Init() {
 
 			file = logFile
 		} else {
-			println(fmt.Sprintf("can't create logger dir at LoggerPath %s", LoggerPath))
+			println(fmt.Sprintf("can't create logger dir at LoggerPath %s", LoggerFilePath()))
 		}
 
 		if e != nil {
@@ -105,6 +105,14 @@ func Reload() {
 	if file != nil {
 		file.Close()
 		once = sync.Once{}
+	}
+}
+
+func LoggerFilePath() string {
+	if p := os.Getenv("GOTH_LOGGER_PATH"); p == "" {
+		return LoggerPath
+	} else {
+		return p
 	}
 }
 
