@@ -88,3 +88,4 @@ fabric.properties
 
 *.DS_Store
 /alloc/logs/
+/logger.yaml

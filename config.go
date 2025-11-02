@@ -1,0 +1,171 @@
+package kklogger
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+var ConfigFileName = "logger.yaml"
+
+// YAMLConfig represents the YAML configuration structure
+type YAMLConfig struct {
+	Logger struct {
+		LoggerPath   string `yaml:"logger_path"`
+		LogLevel     string `yaml:"log_level"`
+		AsyncWrite   bool   `yaml:"async_write"`
+		ReportCaller bool   `yaml:"report_caller"`
+		Environment  string `yaml:"environment"`
+		Archive      struct {
+			MaxSizeBytes     int64  `yaml:"max_size_bytes"`
+			RotationInterval string `yaml:"rotation_interval"`
+			ArchiveDir       string `yaml:"archive_dir"`
+			FilenamePattern  string `yaml:"filename_pattern"`
+			Compression      string `yaml:"compression"`
+		} `yaml:"archive"`
+	} `yaml:"logger"`
+}
+
+// loadConfigFromYAML loads configuration from logger.yaml file
+// Returns nil if file doesn't exist (not an error)
+func loadConfigFromYAML(configPath string) (*Config, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // File doesn't exist, not an error
+		}
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var yamlCfg YAMLConfig
+	if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
+	}
+
+	// Convert YAML config to Config struct
+	cfg := &Config{
+		LoggerPath:   yamlCfg.Logger.LoggerPath,
+		AsyncWrite:   yamlCfg.Logger.AsyncWrite,
+		ReportCaller: yamlCfg.Logger.ReportCaller,
+		Environment:  yamlCfg.Logger.Environment,
+		Level:        parseLogLevel(yamlCfg.Logger.LogLevel),
+		Archive:      parseArchiveConfig(&yamlCfg.Logger.Archive),
+	}
+
+	// Use defaults if values are not set
+	if cfg.LoggerPath == "" {
+		cfg.LoggerPath = defaultLoggerPath
+	}
+	if cfg.Environment == "" {
+		cfg.Environment = defaultEnvironment
+	}
+
+	return cfg, nil
+}
+
+// saveConfigToYAML saves the current configuration to logger.yaml
+func saveConfigToYAML(configPath string, cfg *Config) error {
+	yamlCfg := YAMLConfig{}
+	yamlCfg.Logger.LoggerPath = cfg.LoggerPath
+	yamlCfg.Logger.LogLevel = cfg.Level.String()
+	yamlCfg.Logger.AsyncWrite = cfg.AsyncWrite
+	yamlCfg.Logger.ReportCaller = cfg.ReportCaller
+	yamlCfg.Logger.Environment = cfg.Environment
+
+	// Archive config
+	if cfg.Archive != nil {
+		yamlCfg.Logger.Archive.MaxSizeBytes = cfg.Archive.MaxSizeBytes
+		yamlCfg.Logger.Archive.RotationInterval = cfg.Archive.RotationInterval.String()
+		yamlCfg.Logger.Archive.ArchiveDir = cfg.Archive.ArchiveDir
+		yamlCfg.Logger.Archive.FilenamePattern = cfg.Archive.FilenamePattern
+		yamlCfg.Logger.Archive.Compression = cfg.Archive.Compression
+	}
+
+	data, err := yaml.Marshal(&yamlCfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config to YAML: %w", err)
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
+// parseLogLevel converts string log level to Level type
+func parseLogLevel(level string) Level {
+	switch level {
+	case "trace", "TRACE":
+		return TraceLevel
+	case "debug", "DEBUG":
+		return DebugLevel
+	case "info", "INFO":
+		return InfoLevel
+	case "warn", "WARN":
+		return WarnLevel
+	case "error", "ERROR":
+		return ErrorLevel
+	default:
+		return TraceLevel
+	}
+}
+
+// getConfigPath returns the path to the logger.yaml file
+// Looks in current working directory
+func getConfigPath() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ConfigFileName
+	}
+	return filepath.Join(wd, ConfigFileName)
+}
+
+// parseArchiveConfig converts YAML archive config to ArchiveConfig
+func parseArchiveConfig(yamlArchive *struct {
+	MaxSizeBytes     int64  `yaml:"max_size_bytes"`
+	RotationInterval string `yaml:"rotation_interval"`
+	ArchiveDir       string `yaml:"archive_dir"`
+	FilenamePattern  string `yaml:"filename_pattern"`
+	Compression      string `yaml:"compression"`
+}) *ArchiveConfig {
+	if yamlArchive == nil {
+		return nil
+	}
+
+	cfg := &ArchiveConfig{
+		MaxSizeBytes:    yamlArchive.MaxSizeBytes,
+		ArchiveDir:      yamlArchive.ArchiveDir,
+		FilenamePattern: yamlArchive.FilenamePattern,
+		Compression:     yamlArchive.Compression,
+	}
+
+	// Parse rotation interval
+	if yamlArchive.RotationInterval != "" {
+		if d, err := time.ParseDuration(yamlArchive.RotationInterval); err == nil {
+			cfg.RotationInterval = d
+		}
+	}
+
+	// Set defaults
+	if cfg.ArchiveDir == "" {
+		cfg.ArchiveDir = "archived"
+	}
+	if cfg.FilenamePattern == "" {
+		cfg.FilenamePattern = time.RFC3339 // 2006-01-02T15:04:05Z07:00
+	}
+	if cfg.Compression == "" {
+		cfg.Compression = "gzip"
+	}
+
+	return cfg
+}

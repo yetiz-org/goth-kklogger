@@ -1,0 +1,43 @@
+# KKLogger Configuration Example
+# Copy this file to logger.yaml and modify as needed
+
+logger:
+  # Log file directory path
+  logger_path: "alloc/logs/"
+  
+  # Log level: trace, debug, info, warn, error
+  log_level: "trace"
+  
+  # Enable asynchronous writing for better performance
+  async_write: true
+  
+  # Include caller information in logs
+  report_caller: true
+  
+  # Environment identifier
+  environment: "default"
+  
+  # Archive configuration (optional)
+  # Archive is automatically enabled when max_size_bytes > 0 or rotation_interval is set
+  archive:
+    # Archive when file reaches this size (bytes)
+    # Example: 10485760 = 10MB, 104857600 = 100MB
+    max_size_bytes: 10485760
+    
+    # Rotate log at aligned time intervals
+    # The rotation happens at time boundaries (e.g., "24h" = daily at 00:00, "1h" = hourly at :00)
+    # Go duration format supports: ns, us, ms, s, m, h
+    # Examples: "1h" (hourly at :00), "24h" (daily at 00:00), "168h" (weekly)
+    # Note: Go does NOT support 'd' for days, use hours instead (24h = 1 day)
+    rotation_interval: "24h"
+    
+    # Directory name for archived files (relative to logger_path)
+    archive_dir: "archived"
+    
+    # Filename pattern for archived files (Go time format)
+    # Default: "2006-01-02T15:04:05Z07:00" (RFC3339)
+    # Custom: "2006-01-02_15-04-05" (no colons for Windows compatibility)
+    filename_pattern: "2006-01-02T15:04:05Z07:00"
+    
+    # Compression type: "gzip" or "none"
+    compression: "gzip"
