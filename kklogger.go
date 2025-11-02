@@ -17,6 +17,18 @@ const (
 	defaultChannelSize = 10000
 )
 
+// ContextExtractor is a function type that extracts Fields from a context.Context
+// Users can provide a custom extractor to add context-specific information to logs
+// Example:
+//
+//	func MyExtractor(ctx context.Context) Fields {
+//		return Fields{
+//			"request_id": ctx.Value("request_id"),
+//			"user_id":    ctx.Value("user_id"),
+//		}
+//	}
+type ContextExtractor func(ctx context.Context) Fields
+
 // KKLogger is an instance-based logger with independent configuration
 type KKLogger struct {
 	logger       *internalLogger
@@ -41,6 +53,9 @@ type KKLogger struct {
 	archiveTicker  *time.Ticker  // Ticker for time-based archiving
 	archiveStop    chan struct{} // Signal to stop archive ticker
 	archiving      int32         // Atomic flag: 1 if archive in progress
+
+	// Context extractor for context-aware logging
+	contextExtractor ContextExtractor
 }
 
 // ArchiveConfig holds archive-related configuration
@@ -72,7 +87,6 @@ func DefaultConfig() *Config {
 	// Try to load from YAML file
 	cfg, err := loadConfigFromYAML(configPath)
 	if err != nil {
-		// If there's an error reading/parsing the file, log to stderr and use defaults
 		fmt.Fprintf(os.Stderr, "kklogger: failed to load config from %s: %v, using defaults\n", configPath, err)
 		cfg = nil
 	}
@@ -88,7 +102,6 @@ func DefaultConfig() *Config {
 			Hooks:        nil,
 		}
 
-		// Create logger.yaml with default values
 		if err := saveConfigToYAML(configPath, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "kklogger: failed to create default config file %s: %v\n", configPath, err)
 		}
@@ -190,7 +203,6 @@ func NewWithConfig(cfg *Config) *KKLogger {
 		cfg = DefaultConfig()
 	}
 
-	// Override with environment variables if set
 	loggerPath := cfg.LoggerPath
 	if p := os.Getenv("GOTH_LOGGER_PATH"); p != "" {
 		loggerPath = p
@@ -210,7 +222,6 @@ func NewWithConfig(cfg *Config) *KKLogger {
 		archiveStop:   make(chan struct{}),
 	}
 
-	// Initialize the logger
 	kk.init()
 
 	return kk
@@ -219,16 +230,13 @@ func NewWithConfig(cfg *Config) *KKLogger {
 // init initializes the logger instance
 func (kk *KKLogger) init() {
 	kk.once.Do(func() {
-		// Set logger configuration
 		kk.logger.SetLevel(kk.level)
 		kk.logger.SetReportCaller(kk.reportCaller)
 
-		// Set write callback for archive size tracking
 		kk.logger.onWrite = func(n int) {
 			kk.updateFileSize(n)
 		}
 
-		// Create log directory and file
 		e := os.MkdirAll(kk.loggerPath, 0755)
 		if e == nil {
 			logFilePath := path.Join(kk.loggerPath, "current.log")
@@ -242,7 +250,6 @@ func (kk *KKLogger) init() {
 				kk.currentLogFile = logFilePath
 				kk.fileCreatedAt = time.Now()
 
-				// Get initial file size
 				if stat, err := logFile.Stat(); err == nil {
 					atomic.StoreInt64(&kk.fileSizeBytes, stat.Size())
 				}
@@ -252,13 +259,11 @@ func (kk *KKLogger) init() {
 			kk.logger.SetOutput(os.Stdout)
 		}
 
-		// Start global async worker if enabled
 		if kk.asyncWrite {
 			kk.logger.SetNoLock()
 			startGlobalAsyncWorker()
 		}
 
-		// Start archive monitoring if enabled
 		kk.startArchiveMonitor()
 
 		kk.handOver = false
@@ -268,12 +273,10 @@ func (kk *KKLogger) init() {
 // Close closes the logger and releases all resources
 // It waits for all pending async logs to be written before closing
 func (kk *KKLogger) Close() error {
-	// Mark as closed to prevent new logs
 	if !atomic.CompareAndSwapInt32(&kk.closed, 0, 1) {
-		return nil // Already closed
+		return nil
 	}
 
-	// Stop archive monitoring
 	kk.stopArchiveMonitor()
 
 	if kk.asyncWrite {
@@ -332,9 +335,10 @@ func (kk *KKLogger) Shutdown() {
 
 // asyncLogTask represents a log task to be processed by the global worker
 type asyncLogTask struct {
-	logger   *KKLogger
-	logLevel Level
-	args     interface{}
+	logger        *KKLogger
+	logLevel      Level
+	args          interface{}
+	contextFields Fields // Optional context-extracted fields for *Context methods
 }
 
 // Deprecated: use asyncLogTask instead
@@ -378,6 +382,15 @@ func (kk *KKLogger) SetLoggerHooks(hooks []LoggerHook) {
 	kk.hooks = hooks
 }
 
+// SetContextExtractor sets the context extractor for this logger instance
+// The extractor will be called by all *Context logging methods to extract
+// additional fields from the provided context
+func (kk *KKLogger) SetContextExtractor(extractor ContextExtractor) {
+	kk.mu.Lock()
+	defer kk.mu.Unlock()
+	kk.contextExtractor = extractor
+}
+
 // getLogEntry creates a new log entry for the given severity
 // Each call creates a new entry to avoid race conditions in concurrent logging
 func (kk *KKLogger) getLogEntry(severity string) *internalEntry {
@@ -387,6 +400,47 @@ func (kk *KKLogger) getLogEntry(severity string) *internalEntry {
 	})
 
 	return entry
+}
+
+// getLogEntryWithContext creates a new log entry with context-extracted fields
+// It extracts fields from the context using the configured ContextExtractor
+func (kk *KKLogger) getLogEntryWithContext(ctx context.Context, severity string) *internalEntry {
+	fields := Fields{
+		"env":      kk.environment,
+		"severity": severity,
+	}
+
+	kk.mu.Lock()
+	extractor := kk.contextExtractor
+	kk.mu.Unlock()
+
+	if extractor != nil {
+		if ctxFields := extractor(ctx); ctxFields != nil {
+			for k, v := range ctxFields {
+				fields[k] = v
+			}
+		}
+	}
+
+	return kk.logger.WithFields(fields)
+}
+
+// getLogEntryWithContextFields creates a new log entry with pre-extracted context fields
+// This is used by async logging to avoid context expiration issues
+func (kk *KKLogger) getLogEntryWithContextFields(severity string, ctxFields Fields) *internalEntry {
+	fields := Fields{
+		"env":      kk.environment,
+		"severity": severity,
+	}
+
+	// Merge pre-extracted context fields
+	if ctxFields != nil {
+		for k, v := range ctxFields {
+			fields[k] = v
+		}
+	}
+
+	return kk.logger.WithFields(fields)
 }
 
 // LogJ logs a structured JSON message at the specified log level
@@ -430,21 +484,17 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 	}
 
 	if kk.asyncWrite {
-		// Check if logger is closed
 		if atomic.LoadInt32(&kk.closed) == 1 {
 			return
 		}
 
-		// Get task from pool to reduce allocations
 		task := asyncBlobPool.Get().(*asyncLogTask)
 		task.logger = kk
 		task.logLevel = logLevel
 		task.args = finalArg
 
-		// Increment pending counter before sending
 		atomic.AddInt64(&kk.pendingLogs, 1)
 
-		// Send to global worker (non-blocking with large buffer)
 		select {
 		case globalAsyncChan <- task:
 		default:
@@ -455,6 +505,78 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 		}
 	} else {
 		kk.getLogEntry(getSeverity(logLevel)).Log(logLevel, finalArg)
+		kk.runHooks(logLevel, args...)
+	}
+}
+
+// logWithContext logs a message with context-extracted fields at the specified log level
+// This is the internal implementation used by all *Context methods
+func (kk *KKLogger) logWithContext(ctx context.Context, logLevel Level, args ...interface{}) {
+	if !kk.logger.IsLevelEnabled(logLevel) {
+		return
+	}
+
+	var finalArg interface{}
+
+	if len(args) == 0 {
+		finalArg = []interface{}{""}
+	} else if len(args) == 1 {
+		arg := args[0]
+
+		if str, ok := arg.(string); ok {
+			jsonMsg := SimpleJsonMsg(str)
+			if marshal := jsonMsg.Marshal(); marshal != nil {
+				finalArg = []interface{}{string(marshal)}
+			} else {
+				finalArg = []interface{}{str}
+			}
+		} else if jsonMsg, ok := arg.(*JsonMsg); ok {
+			if marshal := jsonMsg.Marshal(); marshal != nil {
+				finalArg = []interface{}{string(marshal)}
+			} else {
+				finalArg = []interface{}{""}
+			}
+		} else if slice, ok := arg.([]interface{}); ok {
+			finalArg = slice
+		} else {
+			finalArg = []interface{}{fmt.Sprint(arg)}
+		}
+	} else {
+		finalArg = []interface{}{args}
+	}
+
+	var ctxFields Fields
+	kk.mu.Lock()
+	extractor := kk.contextExtractor
+	kk.mu.Unlock()
+
+	if extractor != nil {
+		ctxFields = extractor(ctx)
+	}
+
+	if kk.asyncWrite {
+		if atomic.LoadInt32(&kk.closed) == 1 {
+			return
+		}
+
+		task := asyncBlobPool.Get().(*asyncLogTask)
+		task.logger = kk
+		task.logLevel = logLevel
+		task.args = finalArg
+		task.contextFields = ctxFields
+
+		atomic.AddInt64(&kk.pendingLogs, 1)
+
+		select {
+		case globalAsyncChan <- task:
+		default:
+			atomic.AddInt64(&kk.pendingLogs, -1)
+			asyncBlobPool.Put(task)
+			kk.getLogEntryWithContextFields(getSeverity(logLevel), ctxFields).Log(logLevel, finalArg)
+			kk.runHooks(logLevel, args...)
+		}
+	} else {
+		kk.getLogEntryWithContextFields(getSeverity(logLevel), ctxFields).Log(logLevel, finalArg)
 		kk.runHooks(logLevel, args...)
 	}
 }
@@ -481,8 +603,9 @@ func (kk *KKLogger) Tracef(format string, args ...interface{}) {
 }
 
 // TraceContext logs a trace message with context
+// If a ContextExtractor is configured, it will extract additional fields from the context
 func (kk *KKLogger) TraceContext(ctx context.Context, args ...interface{}) {
-	kk.Trace(args...)
+	kk.logWithContext(ctx, TraceLevel, args...)
 }
 
 // Debug logs a debug message
@@ -507,8 +630,9 @@ func (kk *KKLogger) Debugf(format string, args ...interface{}) {
 }
 
 // DebugContext logs a debug message with context
+// If a ContextExtractor is configured, it will extract additional fields from the context
 func (kk *KKLogger) DebugContext(ctx context.Context, args ...interface{}) {
-	kk.Debug(args...)
+	kk.logWithContext(ctx, DebugLevel, args...)
 }
 
 // Info logs an info message
@@ -533,8 +657,9 @@ func (kk *KKLogger) Infof(format string, args ...interface{}) {
 }
 
 // InfoContext logs an info message with context
+// If a ContextExtractor is configured, it will extract additional fields from the context
 func (kk *KKLogger) InfoContext(ctx context.Context, args ...interface{}) {
-	kk.Info(args...)
+	kk.logWithContext(ctx, InfoLevel, args...)
 }
 
 // Warn logs a warning message
@@ -559,8 +684,9 @@ func (kk *KKLogger) Warnf(format string, args ...interface{}) {
 }
 
 // WarnContext logs a warning message with context
+// If a ContextExtractor is configured, it will extract additional fields from the context
 func (kk *KKLogger) WarnContext(ctx context.Context, args ...interface{}) {
-	kk.Warn(args...)
+	kk.logWithContext(ctx, WarnLevel, args...)
 }
 
 // Error logs an error message
@@ -585,8 +711,9 @@ func (kk *KKLogger) Errorf(format string, args ...interface{}) {
 }
 
 // ErrorContext logs an error message with context
+// If a ContextExtractor is configured, it will extract additional fields from the context
 func (kk *KKLogger) ErrorContext(ctx context.Context, args ...interface{}) {
-	kk.Error(args...)
+	kk.logWithContext(ctx, ErrorLevel, args...)
 }
 
 // SetLogLevel sets the log level for this logger instance
@@ -619,13 +746,11 @@ func (kk *KKLogger) runHooks(logLevel Level, args ...interface{}) {
 	defer func() {
 		if e := recover(); e != nil {
 			if err, ok := e.(error); ok {
-				// Avoid infinite recursion by logging to stderr
 				fmt.Fprintf(os.Stderr, "kklogger: hook panic: %v\n", err)
 			}
 		}
 	}()
 
-	// Read hooks with lock to avoid race condition
 	kk.mu.Lock()
 	hooks := kk.hooks
 	kk.mu.Unlock()
@@ -717,7 +842,7 @@ func startGlobalAsyncWorker() {
 			close(started)
 			globalAsyncWorker()
 		}()
-		<-started // Wait for goroutine to start
+		<-started
 	})
 }
 
@@ -728,7 +853,6 @@ func globalAsyncWorker() {
 	for {
 		select {
 		case <-globalShutdownChan:
-			// Process remaining logs before shutdown
 			for {
 				select {
 				case task := <-globalAsyncChan:
@@ -751,23 +875,20 @@ func processAsyncLogTask(task *asyncLogTask) {
 
 	logger := task.logger
 
-	// Always decrement counter and return task to pool at the end
 	defer func() {
 		atomic.AddInt64(&logger.pendingLogs, -1)
 		asyncBlobPool.Put(task)
 	}()
 
-	// Check if logger is closed - still process the log to ensure it's written
-	// The Close() method waits for pending logs, so we should write them
 	if atomic.LoadInt32(&logger.closed) == 1 {
-		// Logger is closing, but we still write the log since it was queued before close
 	}
 
-	// Write log - getLogEntry will handle file reopening if needed
-	// No need to wait for handOver - just write to current file
-	logger.getLogEntry(getSeverity(task.logLevel)).Log(task.logLevel, task.args)
+	if task.contextFields != nil {
+		logger.getLogEntryWithContextFields(getSeverity(task.logLevel), task.contextFields).Log(task.logLevel, task.args)
+	} else {
+		logger.getLogEntry(getSeverity(task.logLevel)).Log(task.logLevel, task.args)
+	}
 
-	// Run hooks
 	if cast, ok := task.args.([]interface{}); ok {
 		logger.runHooks(task.logLevel, cast...)
 	} else {
@@ -781,7 +902,6 @@ func processAsyncLogTask(task *asyncLogTask) {
 func getDefaultLogger() *KKLogger {
 	defaultLoggerOnce.Do(func() {
 		var archiveCfg *ArchiveConfig
-		// Create archive config if any archive feature is enabled
 		if ArchiveMaxSizeBytes > 0 || ArchiveRotationInterval > 0 {
 			archiveCfg = &ArchiveConfig{
 				MaxSizeBytes:     ArchiveMaxSizeBytes,

@@ -147,12 +147,10 @@ func (e *internalEntry) Log(level Level, args ...interface{}) {
 		fmt.Fprintf(e.logger.out, "Failed to format log entry: %v\n", err)
 	}
 
-	// Return entry to pool after use
 	entryPool.Put(e)
 }
 
 func (e *internalEntry) formatAndWrite() error {
-	// Get buffer from pool
 	buf := bufferPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer bufferPool.Put(buf)

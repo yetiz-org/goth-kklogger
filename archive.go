@@ -26,19 +26,14 @@ func calculateNextRotationTime(now time.Time, interval time.Duration) time.Time 
 		return now
 	}
 
-	// Handle daily rotation (24h)
 	if interval == 24*time.Hour {
-		// Next day at 00:00:00
 		next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 		return next
 	}
 
-	// Handle hourly or sub-hourly rotations
-	// Calculate how many intervals have passed since midnight
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	elapsed := now.Sub(midnight)
 
-	// Calculate the next interval boundary
 	intervalsSinceMidnight := elapsed / interval
 	nextIntervalStart := midnight.Add((intervalsSinceMidnight + 1) * interval)
 
@@ -52,7 +47,6 @@ func (kk *KKLogger) startArchiveMonitor() {
 		return
 	}
 
-	// Start time-based archiving if configured
 	if kk.archiveConfig.RotationInterval > 0 {
 		go kk.archiveTimeMonitor()
 	}
@@ -104,7 +98,6 @@ func (kk *KKLogger) checkSizeBasedArchive() {
 
 	currentSize := atomic.LoadInt64(&kk.fileSizeBytes)
 	if currentSize >= kk.archiveConfig.MaxSizeBytes {
-		// Trigger archive asynchronously to avoid deadlock
 		go func() {
 			if err := kk.performArchive(); err != nil {
 				fmt.Fprintf(os.Stderr, "kklogger: archive failed: %v\n", err)

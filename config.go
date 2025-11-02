@@ -35,7 +35,7 @@ func loadConfigFromYAML(configPath string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // File doesn't exist, not an error
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -45,7 +45,6 @@ func loadConfigFromYAML(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
-	// Convert YAML config to Config struct
 	cfg := &Config{
 		LoggerPath:   yamlCfg.Logger.LoggerPath,
 		AsyncWrite:   yamlCfg.Logger.AsyncWrite,
@@ -55,7 +54,6 @@ func loadConfigFromYAML(configPath string) (*Config, error) {
 		Archive:      parseArchiveConfig(&yamlCfg.Logger.Archive),
 	}
 
-	// Use defaults if values are not set
 	if cfg.LoggerPath == "" {
 		cfg.LoggerPath = defaultLoggerPath
 	}
@@ -75,7 +73,6 @@ func saveConfigToYAML(configPath string, cfg *Config) error {
 	yamlCfg.Logger.ReportCaller = cfg.ReportCaller
 	yamlCfg.Logger.Environment = cfg.Environment
 
-	// Archive config
 	if cfg.Archive != nil {
 		yamlCfg.Logger.Archive.MaxSizeBytes = cfg.Archive.MaxSizeBytes
 		yamlCfg.Logger.Archive.RotationInterval = cfg.Archive.RotationInterval.String()
@@ -89,7 +86,6 @@ func saveConfigToYAML(configPath string, cfg *Config) error {
 		return fmt.Errorf("failed to marshal config to YAML: %w", err)
 	}
 
-	// Ensure directory exists
 	dir := filepath.Dir(configPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
@@ -149,19 +145,17 @@ func parseArchiveConfig(yamlArchive *struct {
 		Compression:     yamlArchive.Compression,
 	}
 
-	// Parse rotation interval
 	if yamlArchive.RotationInterval != "" {
 		if d, err := time.ParseDuration(yamlArchive.RotationInterval); err == nil {
 			cfg.RotationInterval = d
 		}
 	}
 
-	// Set defaults
 	if cfg.ArchiveDir == "" {
 		cfg.ArchiveDir = "archived"
 	}
 	if cfg.FilenamePattern == "" {
-		cfg.FilenamePattern = time.RFC3339 // 2006-01-02T15:04:05Z07:00
+		cfg.FilenamePattern = time.RFC3339
 	}
 	if cfg.Compression == "" {
 		cfg.Compression = "gzip"
