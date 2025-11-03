@@ -201,7 +201,8 @@ func (kk *KKLogger) archiveCurrentFile() error {
 	archivePath := filepath.Join(archiveDir, archiveFilename)
 
 	if kk.archiveConfig.Compression == "gzip" {
-		if err := compressFile(currentLogPath, archivePath); err != nil {
+		innerFilename := strings.TrimSuffix(archiveFilename, ".gz")
+		if err := compressFile(currentLogPath, archivePath, innerFilename); err != nil {
 			return fmt.Errorf("failed to compress log file: %w", err)
 		}
 	} else {
@@ -239,7 +240,8 @@ func (kk *KKLogger) reopenLogFile() error {
 }
 
 // compressFile compresses a file using gzip
-func compressFile(srcPath, dstPath string) error {
+// innerFilename specifies the filename stored inside the gz archive (should end with .log)
+func compressFile(srcPath, dstPath, innerFilename string) error {
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -253,6 +255,7 @@ func compressFile(srcPath, dstPath string) error {
 	defer dstFile.Close()
 
 	gzWriter := gzip.NewWriter(dstFile)
+	gzWriter.Name = innerFilename
 	defer gzWriter.Close()
 
 	if _, err := io.Copy(gzWriter, srcFile); err != nil {
