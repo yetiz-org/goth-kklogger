@@ -91,15 +91,26 @@ func DefaultConfig() *Config {
 		cfg = nil
 	}
 
-	// If no config file exists, create default config
 	if cfg == nil {
+		var archiveCfg *ArchiveConfig
+		if ArchiveMaxSizeBytes > 0 || ArchiveRotationInterval > 0 {
+			archiveCfg = &ArchiveConfig{
+				MaxSizeBytes:     ArchiveMaxSizeBytes,
+				RotationInterval: ArchiveRotationInterval,
+				ArchiveDir:       ArchiveDir,
+				FilenamePattern:  ArchiveFilenamePattern,
+				Compression:      ArchiveCompression,
+			}
+		}
+
 		cfg = &Config{
-			Environment:  defaultEnvironment,
-			LoggerPath:   defaultLoggerPath,
-			AsyncWrite:   true,
-			ReportCaller: true,
+			Environment:  Environment,
+			LoggerPath:   LoggerPath,
+			AsyncWrite:   AsyncWrite,
+			ReportCaller: ReportCaller,
 			Level:        TraceLevel,
 			Hooks:        nil,
+			Archive:      archiveCfg,
 		}
 
 		if err := saveConfigToYAML(configPath, cfg); err != nil {

@@ -55,10 +55,10 @@ func loadConfigFromYAML(configPath string) (*Config, error) {
 	}
 
 	if cfg.LoggerPath == "" {
-		cfg.LoggerPath = defaultLoggerPath
+		cfg.LoggerPath = LoggerPath
 	}
 	if cfg.Environment == "" {
-		cfg.Environment = defaultEnvironment
+		cfg.Environment = Environment
 	}
 
 	return cfg, nil
@@ -138,27 +138,39 @@ func parseArchiveConfig(yamlArchive *struct {
 		return nil
 	}
 
-	cfg := &ArchiveConfig{
-		MaxSizeBytes:    yamlArchive.MaxSizeBytes,
-		ArchiveDir:      yamlArchive.ArchiveDir,
-		FilenamePattern: yamlArchive.FilenamePattern,
-		Compression:     yamlArchive.Compression,
+	maxSize := yamlArchive.MaxSizeBytes
+	if maxSize == 0 {
+		maxSize = ArchiveMaxSizeBytes
 	}
 
+	rotationInterval := ArchiveRotationInterval
 	if yamlArchive.RotationInterval != "" {
 		if d, err := time.ParseDuration(yamlArchive.RotationInterval); err == nil {
-			cfg.RotationInterval = d
+			rotationInterval = d
 		}
 	}
 
-	if cfg.ArchiveDir == "" {
-		cfg.ArchiveDir = "archived"
+	archiveDir := yamlArchive.ArchiveDir
+	if archiveDir == "" {
+		archiveDir = ArchiveDir
 	}
-	if cfg.FilenamePattern == "" {
-		cfg.FilenamePattern = time.RFC3339
+
+	filenamePattern := yamlArchive.FilenamePattern
+	if filenamePattern == "" {
+		filenamePattern = ArchiveFilenamePattern
 	}
-	if cfg.Compression == "" {
-		cfg.Compression = "gzip"
+
+	compression := yamlArchive.Compression
+	if compression == "" {
+		compression = ArchiveCompression
+	}
+
+	cfg := &ArchiveConfig{
+		MaxSizeBytes:     maxSize,
+		RotationInterval: rotationInterval,
+		ArchiveDir:       archiveDir,
+		FilenamePattern:  filenamePattern,
+		Compression:      compression,
 	}
 
 	return cfg
