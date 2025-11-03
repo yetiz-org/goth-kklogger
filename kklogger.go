@@ -512,11 +512,11 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 			atomic.AddInt64(&kk.pendingLogs, -1)
 			asyncBlobPool.Put(task)
 			kk.getLogEntry(getSeverity(logLevel)).Log(logLevel, finalArg)
-			kk.runHooks(logLevel, args...)
+			kk.runHooks(logLevel, finalArg)
 		}
 	} else {
 		kk.getLogEntry(getSeverity(logLevel)).Log(logLevel, finalArg)
-		kk.runHooks(logLevel, args...)
+		kk.runHooks(logLevel, finalArg)
 	}
 }
 
@@ -584,11 +584,11 @@ func (kk *KKLogger) logWithContext(ctx context.Context, logLevel Level, args ...
 			atomic.AddInt64(&kk.pendingLogs, -1)
 			asyncBlobPool.Put(task)
 			kk.getLogEntryWithContextFields(getSeverity(logLevel), ctxFields).Log(logLevel, finalArg)
-			kk.runHooks(logLevel, args...)
+			kk.runHooks(logLevel, finalArg)
 		}
 	} else {
 		kk.getLogEntryWithContextFields(getSeverity(logLevel), ctxFields).Log(logLevel, finalArg)
-		kk.runHooks(logLevel, args...)
+		kk.runHooks(logLevel, finalArg)
 	}
 }
 
@@ -900,11 +900,8 @@ func processAsyncLogTask(task *asyncLogTask) {
 		logger.getLogEntry(getSeverity(task.logLevel)).Log(task.logLevel, task.args)
 	}
 
-	if cast, ok := task.args.([]interface{}); ok {
-		logger.runHooks(task.logLevel, cast...)
-	} else {
-		logger.runHooks(task.logLevel, task.args)
-	}
+	// task.args is already finalArg ([]interface{}), pass it directly to maintain consistency
+	logger.runHooks(task.logLevel, task.args)
 }
 
 // Package-level functions for backward compatibility
