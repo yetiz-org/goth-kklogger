@@ -504,6 +504,11 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 		finalArg = []interface{}{args}
 	}
 
+	var caller *runtime.Frame
+	if kk.reportCaller {
+		caller = kk.getCallerForAsync()
+	}
+
 	if kk.asyncWrite {
 		if atomic.LoadInt32(&kk.closed) == 1 {
 			return
@@ -514,12 +519,7 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 		task.logLevel = logLevel
 		task.args = finalArg
 		task.contextFields = nil
-
-		if kk.reportCaller {
-			task.caller = kk.getCallerForAsync()
-		} else {
-			task.caller = nil
-		}
+		task.caller = caller
 
 		atomic.AddInt64(&kk.pendingLogs, 1)
 
@@ -529,11 +529,11 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 			atomic.AddInt64(&kk.pendingLogs, -1)
 			asyncBlobPool.Put(task)
 			kk.getLogEntry(getSeverity(logLevel)).Log(logLevel, finalArg)
-			kk.runHooks(logLevel, finalArg)
+			kk.runHooks(logLevel, caller, finalArg)
 		}
 	} else {
 		kk.getLogEntry(getSeverity(logLevel)).Log(logLevel, finalArg)
-		kk.runHooks(logLevel, finalArg)
+		kk.runHooks(logLevel, caller, finalArg)
 	}
 }
 
@@ -582,6 +582,11 @@ func (kk *KKLogger) logWithContext(ctx context.Context, logLevel Level, args ...
 		ctxFields = extractor(ctx)
 	}
 
+	var caller *runtime.Frame
+	if kk.reportCaller {
+		caller = kk.getCallerForAsync()
+	}
+
 	if kk.asyncWrite {
 		if atomic.LoadInt32(&kk.closed) == 1 {
 			return
@@ -592,12 +597,7 @@ func (kk *KKLogger) logWithContext(ctx context.Context, logLevel Level, args ...
 		task.logLevel = logLevel
 		task.args = finalArg
 		task.contextFields = ctxFields
-
-		if kk.reportCaller {
-			task.caller = kk.getCallerForAsync()
-		} else {
-			task.caller = nil
-		}
+		task.caller = caller
 
 		atomic.AddInt64(&kk.pendingLogs, 1)
 
@@ -607,11 +607,11 @@ func (kk *KKLogger) logWithContext(ctx context.Context, logLevel Level, args ...
 			atomic.AddInt64(&kk.pendingLogs, -1)
 			asyncBlobPool.Put(task)
 			kk.getLogEntryWithContextFields(getSeverity(logLevel), ctxFields).Log(logLevel, finalArg)
-			kk.runHooks(logLevel, finalArg)
+			kk.runHooks(logLevel, caller, finalArg)
 		}
 	} else {
 		kk.getLogEntryWithContextFields(getSeverity(logLevel), ctxFields).Log(logLevel, finalArg)
-		kk.runHooks(logLevel, finalArg)
+		kk.runHooks(logLevel, caller, finalArg)
 	}
 }
 
@@ -775,8 +775,7 @@ func (kk *KKLogger) GetLogLevel() Level {
 	return kk.level
 }
 
-// runHooks executes all registered hooks for the given log level
-func (kk *KKLogger) runHooks(logLevel Level, args ...interface{}) {
+func (kk *KKLogger) runHooks(logLevel Level, caller *runtime.Frame, args ...interface{}) {
 	defer func() {
 		if e := recover(); e != nil {
 			if err, ok := e.(error); ok {
@@ -789,18 +788,41 @@ func (kk *KKLogger) runHooks(logLevel Level, args ...interface{}) {
 	hooks := kk.hooks
 	kk.mu.Unlock()
 
+	var funcName, file string
+	var line int
+	if caller != nil {
+		funcName = caller.Function
+		file = caller.File
+		line = caller.Line
+	}
+
 	for _, hook := range hooks {
-		switch logLevel {
-		case TraceLevel:
-			hook.Trace(args...)
-		case DebugLevel:
-			hook.Debug(args...)
-		case InfoLevel:
-			hook.Info(args...)
-		case WarnLevel:
-			hook.Warn(args...)
-		case ErrorLevel:
-			hook.Error(args...)
+		if extHook, ok := hook.(ExtendedLoggerHook); ok && caller != nil {
+			switch logLevel {
+			case TraceLevel:
+				extHook.TraceWithCaller(funcName, file, line, args...)
+			case DebugLevel:
+				extHook.DebugWithCaller(funcName, file, line, args...)
+			case InfoLevel:
+				extHook.InfoWithCaller(funcName, file, line, args...)
+			case WarnLevel:
+				extHook.WarnWithCaller(funcName, file, line, args...)
+			case ErrorLevel:
+				extHook.ErrorWithCaller(funcName, file, line, args...)
+			}
+		} else {
+			switch logLevel {
+			case TraceLevel:
+				hook.Trace(args...)
+			case DebugLevel:
+				hook.Debug(args...)
+			case InfoLevel:
+				hook.Info(args...)
+			case WarnLevel:
+				hook.Warn(args...)
+			case ErrorLevel:
+				hook.Error(args...)
+			}
 		}
 	}
 }
@@ -931,8 +953,7 @@ func processAsyncLogTask(task *asyncLogTask) {
 		}
 	}
 
-	// task.args is already finalArg ([]interface{}), pass it directly to maintain consistency
-	logger.runHooks(task.logLevel, task.args)
+	logger.runHooks(task.logLevel, task.caller, task.args)
 }
 
 // Package-level functions for backward compatibility

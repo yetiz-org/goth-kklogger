@@ -55,6 +55,14 @@ type LoggerHook interface {
 	Logger
 }
 
+type ExtendedLoggerHook interface {
+	TraceWithCaller(funcName, file string, line int, args ...interface{})
+	DebugWithCaller(funcName, file string, line int, args ...interface{})
+	InfoWithCaller(funcName, file string, line int, args ...interface{})
+	WarnWithCaller(funcName, file string, line int, args ...interface{})
+	ErrorWithCaller(funcName, file string, line int, args ...interface{})
+}
+
 type DefaultLoggerHook struct {
 }
 
