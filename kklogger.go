@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -349,7 +350,8 @@ type asyncLogTask struct {
 	logger        *KKLogger
 	logLevel      Level
 	args          interface{}
-	contextFields Fields // Optional context-extracted fields for *Context methods
+	contextFields Fields         // Optional context-extracted fields for *Context methods
+	caller        *runtime.Frame // Pre-captured caller info for async mode
 }
 
 // Deprecated: use asyncLogTask instead
@@ -400,6 +402,14 @@ func (kk *KKLogger) SetContextExtractor(extractor ContextExtractor) {
 	kk.mu.Lock()
 	defer kk.mu.Unlock()
 	kk.contextExtractor = extractor
+}
+
+// getCallerForAsync captures caller information for async logging
+// This must be called before sending the log task to the async worker
+func (kk *KKLogger) getCallerForAsync() *runtime.Frame {
+	// Create a temporary entry just to use its getCaller method
+	entry := kk.logger.WithFields(nil)
+	return entry.getCaller()
 }
 
 // getLogEntry creates a new log entry for the given severity
@@ -503,6 +513,13 @@ func (kk *KKLogger) Log(logLevel Level, args ...interface{}) {
 		task.logger = kk
 		task.logLevel = logLevel
 		task.args = finalArg
+		task.contextFields = nil
+
+		if kk.reportCaller {
+			task.caller = kk.getCallerForAsync()
+		} else {
+			task.caller = nil
+		}
 
 		atomic.AddInt64(&kk.pendingLogs, 1)
 
@@ -575,6 +592,12 @@ func (kk *KKLogger) logWithContext(ctx context.Context, logLevel Level, args ...
 		task.logLevel = logLevel
 		task.args = finalArg
 		task.contextFields = ctxFields
+
+		if kk.reportCaller {
+			task.caller = kk.getCallerForAsync()
+		} else {
+			task.caller = nil
+		}
 
 		atomic.AddInt64(&kk.pendingLogs, 1)
 
@@ -894,10 +917,18 @@ func processAsyncLogTask(task *asyncLogTask) {
 	if atomic.LoadInt32(&logger.closed) == 1 {
 	}
 
-	if task.contextFields != nil {
-		logger.getLogEntryWithContextFields(getSeverity(task.logLevel), task.contextFields).Log(task.logLevel, task.args)
+	if task.caller != nil {
+		if task.contextFields != nil {
+			logger.getLogEntryWithContextFields(getSeverity(task.logLevel), task.contextFields).logWithPreCapturedCaller(task.logLevel, task.caller, task.args)
+		} else {
+			logger.getLogEntry(getSeverity(task.logLevel)).logWithPreCapturedCaller(task.logLevel, task.caller, task.args)
+		}
 	} else {
-		logger.getLogEntry(getSeverity(task.logLevel)).Log(task.logLevel, task.args)
+		if task.contextFields != nil {
+			logger.getLogEntryWithContextFields(getSeverity(task.logLevel), task.contextFields).Log(task.logLevel, task.args)
+		} else {
+			logger.getLogEntry(getSeverity(task.logLevel)).Log(task.logLevel, task.args)
+		}
 	}
 
 	// task.args is already finalArg ([]interface{}), pass it directly to maintain consistency

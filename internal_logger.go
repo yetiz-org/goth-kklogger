@@ -111,6 +111,15 @@ func (e *internalEntry) HasCaller() bool {
 }
 
 func (e *internalEntry) Log(level Level, args ...interface{}) {
+	e.logInternal(level, nil, args...)
+}
+
+// logWithPreCapturedCaller logs with a pre-captured caller (for async mode)
+func (e *internalEntry) logWithPreCapturedCaller(level Level, caller *runtime.Frame, args ...interface{}) {
+	e.logInternal(level, caller, args...)
+}
+
+func (e *internalEntry) logInternal(level Level, preCapturedCaller *runtime.Frame, args ...interface{}) {
 	if !e.logger.IsLevelEnabled(level) {
 		return
 	}
@@ -119,7 +128,11 @@ func (e *internalEntry) Log(level Level, args ...interface{}) {
 	e.Time = time.Now()
 
 	if e.HasCaller() {
-		e.Caller = e.getCaller()
+		if preCapturedCaller != nil {
+			e.Caller = preCapturedCaller
+		} else {
+			e.Caller = e.getCaller()
+		}
 	}
 
 	switch len(args) {
