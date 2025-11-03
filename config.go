@@ -16,8 +16,8 @@ type YAMLConfig struct {
 	Logger struct {
 		LoggerPath   string `yaml:"logger_path"`
 		LogLevel     string `yaml:"log_level"`
-		AsyncWrite   bool   `yaml:"async_write"`
-		ReportCaller bool   `yaml:"report_caller"`
+		AsyncWrite   *bool  `yaml:"async_write"`
+		ReportCaller *bool  `yaml:"report_caller"`
 		Environment  string `yaml:"environment"`
 		Archive      struct {
 			MaxSizeBytes     int64  `yaml:"max_size_bytes"`
@@ -46,19 +46,29 @@ func loadConfigFromYAML(configPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		LoggerPath:   yamlCfg.Logger.LoggerPath,
-		AsyncWrite:   yamlCfg.Logger.AsyncWrite,
-		ReportCaller: yamlCfg.Logger.ReportCaller,
-		Environment:  yamlCfg.Logger.Environment,
-		Level:        parseLogLevel(yamlCfg.Logger.LogLevel),
-		Archive:      parseArchiveConfig(&yamlCfg.Logger.Archive),
+		LoggerPath:  yamlCfg.Logger.LoggerPath,
+		Environment: yamlCfg.Logger.Environment,
+		Level:       parseLogLevel(yamlCfg.Logger.LogLevel),
+		Archive:     parseArchiveConfig(&yamlCfg.Logger.Archive),
 	}
 
+	// Fill in missing values from global variables
 	if cfg.LoggerPath == "" {
 		cfg.LoggerPath = LoggerPath
 	}
 	if cfg.Environment == "" {
 		cfg.Environment = Environment
+	}
+	// Use YAML value if set, otherwise use global variable
+	if yamlCfg.Logger.AsyncWrite != nil {
+		cfg.AsyncWrite = *yamlCfg.Logger.AsyncWrite
+	} else {
+		cfg.AsyncWrite = AsyncWrite
+	}
+	if yamlCfg.Logger.ReportCaller != nil {
+		cfg.ReportCaller = *yamlCfg.Logger.ReportCaller
+	} else {
+		cfg.ReportCaller = ReportCaller
 	}
 
 	return cfg, nil
@@ -69,8 +79,10 @@ func saveConfigToYAML(configPath string, cfg *Config) error {
 	yamlCfg := YAMLConfig{}
 	yamlCfg.Logger.LoggerPath = cfg.LoggerPath
 	yamlCfg.Logger.LogLevel = cfg.Level.String()
-	yamlCfg.Logger.AsyncWrite = cfg.AsyncWrite
-	yamlCfg.Logger.ReportCaller = cfg.ReportCaller
+	asyncWrite := cfg.AsyncWrite
+	yamlCfg.Logger.AsyncWrite = &asyncWrite
+	reportCaller := cfg.ReportCaller
+	yamlCfg.Logger.ReportCaller = &reportCaller
 	yamlCfg.Logger.Environment = cfg.Environment
 
 	if cfg.Archive != nil {

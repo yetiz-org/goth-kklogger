@@ -912,25 +912,45 @@ func processAsyncLogTask(task *asyncLogTask) {
 // getDefaultLogger returns the default logger instance
 func getDefaultLogger() *KKLogger {
 	defaultLoggerOnce.Do(func() {
-		var archiveCfg *ArchiveConfig
-		if ArchiveMaxSizeBytes > 0 || ArchiveRotationInterval > 0 {
-			archiveCfg = &ArchiveConfig{
-				MaxSizeBytes:     ArchiveMaxSizeBytes,
-				RotationInterval: ArchiveRotationInterval,
-				ArchiveDir:       ArchiveDir,
-				FilenamePattern:  ArchiveFilenamePattern,
-				Compression:      ArchiveCompression,
-			}
+		// Try to load config from YAML first
+		cfg, err := loadConfigFromYAML(getConfigPath())
+		if err != nil {
+			// YAML parsing error - use global variables as fallback
+			cfg = nil
 		}
 
-		cfg := &Config{
-			Environment:  Environment,
-			LoggerPath:   LoggerPath,
-			AsyncWrite:   AsyncWrite,
-			ReportCaller: ReportCaller,
-			Level:        TraceLevel,
-			Archive:      archiveCfg,
+		// If no YAML config, build from global variables
+		if cfg == nil {
+			var archiveCfg *ArchiveConfig
+			if ArchiveMaxSizeBytes > 0 || ArchiveRotationInterval > 0 {
+				archiveCfg = &ArchiveConfig{
+					MaxSizeBytes:     ArchiveMaxSizeBytes,
+					RotationInterval: ArchiveRotationInterval,
+					ArchiveDir:       ArchiveDir,
+					FilenamePattern:  ArchiveFilenamePattern,
+					Compression:      ArchiveCompression,
+				}
+			}
+
+			cfg = &Config{
+				Environment:  Environment,
+				LoggerPath:   LoggerPath,
+				AsyncWrite:   AsyncWrite,
+				ReportCaller: ReportCaller,
+				Level:        TraceLevel,
+				Archive:      archiveCfg,
+			}
+		} else {
+			// YAML config exists - fill in missing values from global variables
+			if cfg.LoggerPath == "" {
+				cfg.LoggerPath = LoggerPath
+			}
+			if cfg.Environment == "" {
+				cfg.Environment = Environment
+			}
+			// Archive config is already handled in loadConfigFromYAML
 		}
+
 		defaultLogger = NewWithConfig(cfg)
 	})
 	return defaultLogger
