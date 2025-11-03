@@ -161,11 +161,11 @@ var (
 type Level uint32
 
 const (
-	TraceLevel Level = iota
-	DebugLevel
-	InfoLevel
+	ErrorLevel Level = iota
 	WarnLevel
-	ErrorLevel
+	InfoLevel
+	DebugLevel
+	TraceLevel
 )
 
 func (l Level) String() string {

@@ -76,7 +76,7 @@ func (l *internalLogger) SetNoLock() {
 }
 
 func (l *internalLogger) IsLevelEnabled(level Level) bool {
-	return l.level <= level
+	return l.level >= level
 }
 
 func (l *internalLogger) WithFields(fields Fields) *internalEntry {

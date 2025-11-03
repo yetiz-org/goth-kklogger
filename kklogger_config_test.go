@@ -244,8 +244,10 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("Environment should default to %s, got %s", defaultEnvironment, cfg.Environment)
 	}
 
-	if cfg.Level != 0 {
-		t.Errorf("Level should default to 0, got %v", cfg.Level)
+	// When no level is specified in YAML, parseLogLevel returns TraceLevel (default case)
+	// This means all log levels will be recorded by default
+	if cfg.Level != TraceLevel {
+		t.Errorf("Level should default to TraceLevel, got %v", cfg.Level)
 	}
 }
 
